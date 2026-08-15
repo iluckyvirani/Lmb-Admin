@@ -1,19 +1,14 @@
 /**
- * Cloudinary unsigned upload (browser → Cloudinary).
- * Set in admin/.env:
- *   VITE_CLOUDINARY_CLOUD_NAME=your_cloud
- *   VITE_CLOUDINARY_UPLOAD_PRESET=your_unsigned_preset
+ * Cloudinary signed upload via LMB API (API secret stays on server).
+ * Requires server/.env: CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET
+ * Admin must be logged in (Bearer token).
  */
 
-const cloudName = () =>
-  (import.meta.env.VITE_CLOUDINARY_CLOUD_NAME as string | undefined)?.trim() ??
-  "";
-const uploadPreset = () =>
-  (import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET as string | undefined)?.trim() ??
-  "";
+import { API_BASE, getAdminToken } from "@/lib/connect";
 
 export function isCloudinaryConfigured() {
-  return Boolean(cloudName() && uploadPreset());
+  // Uploads use signed API on the server — no VITE_CLOUDINARY_* needed in admin.
+  return true;
 }
 
 export type CloudinaryUploadResult = {
@@ -23,18 +18,44 @@ export type CloudinaryUploadResult = {
   height?: number;
 };
 
+type SignResponse = {
+  ok: boolean;
+  cloudName: string;
+  apiKey: string;
+  timestamp: number;
+  signature: string;
+  folder: string;
+  error?: string;
+};
+
+async function getSignedParams(folder: string): Promise<SignResponse> {
+  const token = getAdminToken();
+  if (!token) {
+    throw new Error("Login required to upload images");
+  }
+  const res = await fetch(`${API_BASE}/uploads/cloudinary-sign`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ folder }),
+  });
+  const data = (await res.json()) as SignResponse;
+  if (!res.ok || !data.ok) {
+    throw new Error(
+      data.error ||
+        "Cloudinary sign failed. Set CLOUDINARY_* in server/.env and restart the API.",
+    );
+  }
+  return data;
+}
+
 export async function uploadImageToCloudinary(
   file: File,
   folder = "lmb/products",
 ): Promise<CloudinaryUploadResult> {
-  const cloud = cloudName();
-  const preset = uploadPreset();
-  if (!cloud || !preset) {
-    throw new Error(
-      "Cloudinary is not configured. Add VITE_CLOUDINARY_CLOUD_NAME and VITE_CLOUDINARY_UPLOAD_PRESET to admin/.env",
-    );
-  }
-
   if (!file.type.startsWith("image/")) {
     throw new Error("Please choose an image file");
   }
@@ -42,13 +63,17 @@ export async function uploadImageToCloudinary(
     throw new Error("Image must be under 8 MB");
   }
 
+  const signed = await getSignedParams(folder);
+
   const body = new FormData();
   body.append("file", file);
-  body.append("upload_preset", preset);
-  body.append("folder", folder);
+  body.append("api_key", signed.apiKey);
+  body.append("timestamp", String(signed.timestamp));
+  body.append("signature", signed.signature);
+  body.append("folder", signed.folder);
 
   const res = await fetch(
-    `https://api.cloudinary.com/v1_1/${cloud}/image/upload`,
+    `https://api.cloudinary.com/v1_1/${signed.cloudName}/image/upload`,
     { method: "POST", body },
   );
 

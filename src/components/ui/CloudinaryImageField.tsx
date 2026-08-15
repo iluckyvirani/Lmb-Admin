@@ -1,9 +1,7 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ImagePlus, Loader2, Trash2, Upload } from "lucide-react";
-import {
-  isCloudinaryConfigured,
-  uploadImageToCloudinary,
-} from "@/lib/cloudinary";
+import { uploadImageToCloudinary } from "@/lib/cloudinary";
+import { API_BASE } from "@/lib/connect";
 
 type Props = {
   value: string;
@@ -21,7 +19,22 @@ export function CloudinaryImageField({
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const configured = isCloudinaryConfigured();
+  const [serverReady, setServerReady] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${API_BASE}/uploads/cloudinary-status`)
+      .then((r) => r.json())
+      .then((d: { configured?: boolean }) => {
+        if (!cancelled) setServerReady(Boolean(d.configured));
+      })
+      .catch(() => {
+        if (!cancelled) setServerReady(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function onFile(file: File | undefined) {
     if (!file) return;
@@ -70,7 +83,7 @@ export function CloudinaryImageField({
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              disabled={uploading || !configured}
+              disabled={uploading}
               onClick={() => inputRef.current?.click()}
               className="inline-flex cursor-pointer items-center gap-2 bg-gold px-4 py-2.5 text-sm font-medium text-background hover:bg-gold-accent disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -94,14 +107,12 @@ export function CloudinaryImageField({
             )}
           </div>
 
-          {!configured && (
+          {serverReady === false && (
             <p className="text-xs text-amber-400/90">
-              Add{" "}
-              <code className="text-gold">VITE_CLOUDINARY_CLOUD_NAME</code> and{" "}
-              <code className="text-gold">VITE_CLOUDINARY_UPLOAD_PRESET</code>{" "}
-              to <code className="text-gold">admin/.env</code>, then restart the
-              admin app. Create an <strong>unsigned</strong> upload preset in
-              Cloudinary Settings → Upload.
+              API Cloudinary is not configured. Set{" "}
+              <code className="text-gold">CLOUDINARY_*</code> in{" "}
+              <code className="text-gold">server/.env</code> (or Vercel API
+              env), restart the API, and stay logged in as admin.
             </p>
           )}
 
